@@ -7,7 +7,7 @@ Extract in Termux private storage, not /sdcard:
 
 ```sh
 mkdir -p "$HOME/opt"
-tar -xzf "$HOME/storage/downloads/bookokrat-aarch64-unknown-linux-gnu-grun.tar.gz" -C "$HOME/opt"
+tar --no-same-owner -xzf "$HOME/storage/downloads/bookokrat-aarch64-unknown-linux-gnu-grun.tar.gz" -C "$HOME/opt"
 cd "$HOME/opt/bookokrat-aarch64-unknown-linux-gnu-grun"
 sha256sum -c SHA256SUMS
 chmod +x bookokrat launch.sh
@@ -22,15 +22,17 @@ extracted directory together. In zsh, add this to ~/.zshrc for convenience:
 bookokrat() { bash "$HOME/opt/bookokrat-aarch64-unknown-linux-gnu-grun/launch.sh" "$@"; }
 ```
 
-The launch script invokes grun with bundled GNU/Linux libraries (including
-Fontconfig and its dependencies), clears inherited Bionic preloads, and finds
-Android fonts. Do not copy these libraries into $PREFIX/lib. The package uses
-Termux's own glibc and matching loader, not Ubuntu's libc. The runtime must
-satisfy the GLIBC symbol versions recorded in evidence/symbol-versions.txt.
+The launch script invokes the GNU loader supplied by the glibc-runner runtime
+directly, passing bundled libraries with --library-path. It does not export
+LD_LIBRARY_PATH: that would expose GNU libraries to Termux's Bionic bash and
+can cause a "libc.so has bad ELF magic" failure. It clears inherited preloads
+and finds Android fonts. Do not copy these libraries into $PREFIX/lib. The
+package uses Termux's own glibc and matching loader, not Ubuntu's libc. The
+runtime must satisfy the GLIBC symbol versions in evidence/symbol-versions.txt.
 
-Old grun versions may split filenames containing spaces. Update glibc-runner;
-the equivalent direct loader invocation for diagnosis, after first running
-launch.sh to create fonts.conf, is:
+If the old launcher fails, recover in your current Termux shell with
+`unset LD_LIBRARY_PATH LD_PRELOAD`. The equivalent direct invocation, after
+first running launch.sh to create fonts.conf, is:
 
 ```sh
 env -u LD_PRELOAD -u LD_LIBRARY_PATH \

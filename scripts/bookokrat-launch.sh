@@ -9,5 +9,14 @@ if [ ! -f "$here/fonts.conf" ]; then
     > "$here/fonts.conf"
 fi
 export FONTCONFIG_FILE="$here/fonts.conf"
-export LD_LIBRARY_PATH="$here/lib:$PREFIX/glibc/lib"
-exec grun "$here/bookokrat" "$@"
+# Keep GNU libraries out of the environment of Termux's Bionic shell and
+# child programs. Pass them only to the glibc-runner runtime's ELF loader.
+loader="$PREFIX/glibc/bin/ld.so"
+if [ ! -x "$loader" ]; then
+  loader="$PREFIX/glibc/lib/ld-linux-aarch64.so.1"
+fi
+if [ ! -x "$loader" ]; then
+  printf 'GNU loader not found. Check the Termux glibc installation.\n' >&2
+  exit 1
+fi
+exec "$loader" --library-path "$here/lib:$PREFIX/glibc/lib" "$here/bookokrat" "$@"
