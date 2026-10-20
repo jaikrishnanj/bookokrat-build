@@ -1,0 +1,84 @@
+name: Bookokrat native ARM64 glibc
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bookokrat-arm64.yml'
+      - 'bookokrat-synctex-highlight.patch'
+      - 'scripts/bookokrat-*.sh'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      LIBCLANG_PATH: /usr/lib/llvm-14/lib
+      TARGET: aarch64-unknown-linux-gnu
+      BOOKOKRAT_COMMIT: 03600927470ce674ae1162a7269de840c7e044d5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check native host
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 22.04
+          mkdir -p evidence
+          uname -a | tee evidence/host.txt
+          cat /etc/os-release >> evidence/host.txt
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang-14 libclang-14-dev \
+            cmake pkg-config libfontconfig1-dev libfreetype6-dev libx11-dev \
+            zlib1g-dev libjpeg-dev libopenjp2-7-dev patchelf binutils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Retrieve pinned source and apply patch
+        run: |
+          set -euo pipefail
+          git clone https://github.com/bugzmanov/bookokrat.git bookokrat-src
+          git -C bookokrat-src checkout --detach "$BOOKOKRAT_COMMIT"
+          git -C bookokrat-src apply --check ../bookokrat-synctex-highlight.patch
+          git -C bookokrat-src apply ../bookokrat-synctex-highlight.patch
+          git -C bookokrat-src diff --check
+          git -C bookokrat-src rev-parse HEAD | tee evidence/upstream-commit.txt
+          rustc -vV | tee evidence/rustc.txt
+          grep -qx 'host: aarch64-unknown-linux-gnu' evidence/rustc.txt
+      - name: Run SyncTeX regression
+        working-directory: bookokrat-src
+        run: |
+          set -euo pipefail
+          cargo test --locked --target "$TARGET" --lib \
+            synctex_forward_target_scrolls_without_moving_visible_cursor \
+            -- --nocapture 2>&1 | tee ../evidence/synctex-test.txt
+          grep -q '1 passed; 0 failed' ../evidence/synctex-test.txt
+      - name: Build GNU Linux release
+        working-directory: bookokrat-src
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target "$TARGET" --bin bookokrat \
+            2>&1 | tee ../evidence/build.txt
+      - name: Package runtime dependencies and installation instructions
+        run: bash scripts/bookokrat-package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bookokrat-aarch64-unknown-linux-gnu-grun
+          path: |
+            bookokrat-aarch64-unknown-linux-gnu-grun.tar.gz
+            bookokrat-aarch64-unknown-linux-gnu-grun.tar.gz.sha256
+          if-no-files-found: error
+      - name: Preserve build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bookokrat-arm64-build-evidence
+          path: evidence/

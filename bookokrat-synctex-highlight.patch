@@ -1,0 +1,72 @@
+diff --git a/src/main_app.rs b/src/main_app.rs
+index 434b8cc..885589a 100644
+--- a/src/main_app.rs
++++ b/src/main_app.rs
+@@ -7498,6 +7498,15 @@ impl App {
+             return false;
+         }
+ 
++        // Display the target line via the existing selection-overlay converter.
++        // Image-space rendering works with Kitty, Sixel and iTerm2 terminals.
++        let rects = pdf_reader.pending_highlight_rects();
++        if !rects.is_empty()
++            && let Some(tx) = self.pdf_conversion_tx.as_ref()
++        {
++            let _ = tx.send(crate::pdf::ConversionCommand::UpdateSelection(rects));
++        }
++
+         if !pdf_reader.is_kitty
+             && let Some(viewport) = pdf_reader.current_viewport_update()
+             && let Some(cmd) = pdf_reader.viewport_command(viewport)
+diff --git a/src/widget/pdf_reader/navigation.rs b/src/widget/pdf_reader/navigation.rs
+index d9cea22..8d6d00e 100644
+--- a/src/widget/pdf_reader/navigation.rs
++++ b/src/widget/pdf_reader/navigation.rs
+@@ -4441,6 +4441,14 @@ impl PdfReaderState {
+         self.normal_mode.cursor = cursor;
+         let _ = self.ensure_cursor_visible();
+         self.normal_mode.cursor = previous_cursor;
++
++        // Reuse the existing line-level, transient PDF selection overlay.
++        // The converter paints it into the image for Kitty, Sixel and iTerm2.
++        self.start_mark_jump_highlight(
++            page,
++            cursor.line_idx,
++            std::time::Duration::from_secs(3),
++        );
+         true
+     }
+ 
+@@ -7632,5 +7640,19 @@ mod tests {
+         assert_eq!(state.normal_mode.cursor.page, 0);
+         assert_eq!(state.normal_mode.cursor.line_idx, 0);
+         assert_eq!(state.normal_mode.cursor.char_idx, 0);
++
++        // The highlighted rectangle follows the target, not the saved cursor.
++        let rects = state.pending_highlight_rects();
++        assert_eq!(rects.len(), 1);
++        assert_eq!(rects[0].page, 0);
++        assert_eq!(rects[0].topleft_y, 120);
++        assert_eq!(rects[0].bottomright_y, 130);
++        assert!(state.pending_highlight.as_ref().unwrap().expires_at.is_some());
++
++        // Existing tick machinery clears the flash automatically.
++        state.pending_highlight.as_mut().unwrap().expires_at =
++            Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
++        assert!(state.tick_pending_highlight());
++        assert!(state.pending_highlight_rects().is_empty());
+     }
+ }
+diff --git a/vhs_tests/tapes/pdf_synctex.tape b/vhs_tests/tapes/pdf_synctex.tape
+index a183366..8f5a14c 100644
+--- a/vhs_tests/tapes/pdf_synctex.tape
++++ b/vhs_tests/tapes/pdf_synctex.tape
+@@ -20,7 +20,7 @@ screenshot initial
+ # --- Forward search: editor -> PDF -------------------------------------------
+ shell S=$(ls "${TMPDIR%/}/"bookokrat-stx-test-comprehensi*.sock | head -1) && printf 'forward 48 1 test_comprehensive.tex\n' | nc -U "$S"
+ wait 500
+-desc Editor sent "forward 48 1" (intro text). Expect: jumped to page 3 ([3/20]) scrolled so the target line is in view. (No flash highlight - forward search scrolls only.)
++desc Editor sent "forward 48 1" (intro text). Expect: jumped to page 3 ([3/20]) scrolled so the target line is in view. The target line is temporarily highlighted for three seconds.
+ screenshot forward_p3
+ 
+ shell S=$(ls "${TMPDIR%/}/"bookokrat-stx-test-comprehensi*.sock | head -1) && printf 'forward 305 1 test_comprehensive.tex\n' | nc -U "$S"
